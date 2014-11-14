@@ -30,24 +30,89 @@ def read_train(train_url, num_user, num_movie):
 
 
 def read_test(test_url):
+    """
+    Read in test data and return a dictionary of user samples
+    """
     data_file = urllib2.urlopen(test_url)
-    data = data_file.readline()
-    print data
-    # print len(data)
-    return data
+    # data = data_file.readlines()
+    users = {}
+    for user_sample in data_file.readlines():
+        [userid, movie, score] = map(int, user_sample.split())
+        if userid in users.keys():
+            if score > 0:
+                users[userid].add_rated_movie(movie, score)
+            else:
+                users[userid].add_prediction(movie)
+        else:
+            users[userid] = TestUser(userid)
+            assert score > 0, "User did not give rate!"
+            users[userid].add_rated_movie(movie, score)
+    return users
 
 
-data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
+class TestUser:
+    """
+    A simple class for test sample
+    """
+    def __init__(self, userid):
+        """
+        initial user sample with empty list of rated movies and empty dictionary of predicting movies
+        """
+        self._userid = userid
+        self._rated_movies = {}
+        self._predictions = {}
+
+
+    def get_userid(self):
+        """
+        :return: user id
+        """
+        return self._userid
+
+
+    def get_rated_movies(self):
+        """
+        Return rated movies as a dictionary
+        """
+        return self._rated_movies
+
+
+    def get_predictions(self):
+        """
+        Return predicted movies as a dictionary
+        """
+        return self._predictions
+
+
+    def add_rated_movie(self, movie_id, movie_score):
+        """
+        Add a new rated movie into rated_movie dictionary
+        """
+        assert movie_id not in self._rated_movies.keys(), "This movie is already rated."
+        self._rated_movies[movie_id] = movie_score
+
+
+    def add_prediction(self, movie_id):
+        """
+        Add the movie id into prediction dictionary and initial its score as zero
+        """
+        assert movie_id not in self._rated_movies.keys(), "This movie has been rated"
+        assert movie_id not in self._predictions.keys(), "This movie is already in prediction list"
+        self._predictions[movie_id] = 0
+
+
+# data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
 # print data[199]
 # print data[199][-17]
 # data2 = data.split('\r')
 # print data2
 # print len(data2)
 
+# testdata = read_test(TESTING5_URL)
 
-# l1 = [1,2,3,4,5,6]
-# l2 = np.asarray(l1)
-# l3 = np.reshape(l2, (3,2))
-# print l1
-# print l2
-# print l3
+# print "rated movies", testdata[201].get_rated_movies()
+# print "predictions", testdata[201].get_predictions()
+
+# l = '201 237 4\r\n'
+# a = map(int, l.split())
+# print a, len(a), type(a)
