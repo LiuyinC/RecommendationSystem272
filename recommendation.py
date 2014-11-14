@@ -9,26 +9,24 @@ import numpy as np
 
 
 TRAINING_URL = 'http://www.cse.scu.edu/~yfang/coen272/train.txt'
+TRAINING_USERS = 200
+TRAINING_MOVIES = 1000
 TESTING5_URL = 'http://www.cse.scu.edu/~yfang/coen272/test5.txt'
 TESTING10_URL = 'http://www.cse.scu.edu/~yfang/coen272/test10.txt'
 TESTING20_URL = 'http://www.cse.scu.edu/~yfang/coen272/test20.txt'
 
 
-def read_train(train_url):
+def read_train(train_url, num_user, num_movie):
     """
-    Read training data from internet and return a nested dictionary in which each element is a training sample.
-    Each training sample contains rating scores on 1000 movies.
+    Read training data from internet and return an array matrix, in which row represents user,
+    and column represents movie rate score.
     Score 0 means that the user does not rate the movie.
     """
     data_file= urllib2.urlopen(train_url)
     data = data_file.readline()
-    data = data.split()
-    user_movie = {}
-    for userid in range(200, 0, -1):
-        user_movie[userid] = {}
-        for movieid in range(1000, 0, -1):
-            user_movie[userid][movieid] = int(data.pop())
-    return user_movie
+    data_array = np.asarray(map(int, data.split()))
+    data_matrix = np.reshape(data_array, (num_user, num_movie))
+    return data_matrix
 
 
 def read_test(test_url):
@@ -39,8 +37,9 @@ def read_test(test_url):
     return data
 
 
-# data = read_test(TRAINING_URL)
-# print type(data)
+data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
+# print data[199]
+# print data[199][-17]
 # data2 = data.split('\r')
 # print data2
 # print len(data2)
@@ -52,7 +51,3 @@ def read_test(test_url):
 # print l1
 # print l2
 # print l3
-
-# s1 = ['1', '2', '3', '4']
-# l1 = map(int, s1)
-# print l1
