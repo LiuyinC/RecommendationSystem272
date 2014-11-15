@@ -110,6 +110,15 @@ class TestUser:
         self._predictions[movie_id] = prediction
 
 
+    def output_predictions(self, output_file):
+        """
+        Write predictions as required format into file, the file has been opened.
+        """
+        predictions = self.get_predictions()
+        for movie in sorted(predictions.keys()):
+            output_file.write(str(self.get_userid()) + "\t" + str(movie) + "\t" + str(predictions[movie]) + "\r")
+
+
     def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method):
         """
         Get other rating information from training data where rating score of predict movie is not zero.
@@ -177,6 +186,21 @@ class TestUser:
             return None
 
 
+def run_example():
+    """
+    Run the recommendation system
+    """
+    training_data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
+    test_users = read_test(TESTING5_URL)
+    output_file = open("result5.txt", "w")
+    for user in test_users.values():
+        for predicting_movie in user.get_predictions().keys():
+            user.user_based_CF(predicting_movie, training_data, 5, "Cosine")
+        user.output_predictions(output_file)
+    output_file.close()
+
+
+run_example()
 
 # data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
 # print data[199]
@@ -194,11 +218,11 @@ class TestUser:
 # a = map(int, l.split())
 # print a, len(a), type(a)
 
-l = np.array([[1,2,3,0], [4,5,6,7], [8,9,10,11]])
-l2 = np.array([1,2,3,0])
-print np.argsort(l2)
-print np.argsort(l2)[::-1][0:2]
-print l[:, -1][np.argsort(l2)[::-1][0:2]]
+# l = np.array([[1,2,3,0], [4,5,6,7], [8,9,10,11]])
+# l2 = np.array([1,2,3,0])
+# print np.argsort(l2)
+# print np.argsort(l2)[::-1][0:2]
+# print l[:, -1][np.argsort(l2)[::-1][0:2]]
 # d = np.vstack((l[:, -1], l2[0:3]))
 # print d[0] * d[1]
 # print l
