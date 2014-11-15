@@ -6,6 +6,7 @@ Develop different algorithms to make recommendations for movies.
 
 import urllib2
 import numpy as np
+from scipy import linalg
 
 
 TRAINING_URL = 'http://www.cse.scu.edu/~yfang/coen272/train.txt'
@@ -101,6 +102,82 @@ class TestUser:
         self._predictions[movie_id] = 0
 
 
+    def update_prediction(self, movie_id, prediction):
+        """
+        Update prediction score
+        """
+        assert self._predictions[movie_id] == 0, "This movie has been predicted before"
+        self._predictions[movie_id] = prediction
+
+
+    def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method):
+        """
+        Get other rating information from training data where rating score of predict movie is not zero.
+        If user_based is true, the rating information only contains test user's rated movies.
+        And return a n * (m+1) matrix, where n is number of relevant neighbors, and m is number of rated movies,
+        and the last column is rated scores of predicting movie.
+        If user_based is false, the rating information ?????????
+
+        """
+        def cosine_similarity(vect2, vect1):
+            """
+            Compute the basic cosine similarity between vect1 and vect2 with the same dimensions.
+            vect1 can't contain zero value, is the test user's rating.
+            Vect1 and vect2 are np.arrays
+            """
+            assert sum(vect1 <= 0) == 0, "Test User's rating score has zero value"
+            assert np.size(vect1) == np.size(vect2), "Don't have the same dimension"
+            non_zeros = vect2 > 0
+            if sum(non_zeros) == 0:
+                # vector2 has no rated scores
+                return 0.0
+            if sum(non_zeros) == 1:
+                # fix the issue that if vectors have dimension of 1, their cosine similarity is always 1
+                cosine = 0.8 - float(abs(vect1[non_zeros] - vect2[non_zeros])) * 0.2
+            else:
+                vector1 = vect1[non_zeros].astype('float')
+                vector2 = vect2[non_zeros].astype('float')
+                cosine = sum(vector1 * vector2) / np.sqrt(sum(vector1 * vector1) * sum(vector2 * vector2))
+            return cosine
+
+        # Get relevant neighbors as a n * (m +1) matrix, where n is the number of neighbors,
+        # first m columns are relevant movies and last column is predicting movie.
+        rated_movies = self.get_rated_movies()
+        rated_movies_indices = np.array(sorted(rated_movies.keys())) - 1
+        predict_movie_index = predict_movie - 1
+        predict_non_zero_id = np.nonzero(training_data[:, predict_movie_index])[0]
+        relevant_neighbors = training_data[predict_non_zero_id , :][:, np.hstack((rated_movies_indices, predict_movie_index))]
+
+        # Get test user's rating as a np.array
+        user_rated_scores = []
+        for key in sorted(rated_movies.keys()):
+            user_rated_scores.append(rated_movies[key])
+        user_rated_scores = np.array(user_rated_scores)
+
+        if similarity_method == 'Cosine':
+            # Calculate similarities
+            similarities = np.apply_along_axis(cosine_similarity, 1, relevant_neighbors[:, 0:-1], user_rated_scores)
+            # Find k nearest neighbors
+            k_sorted_indices = np.argsort(similarities)[::-1][0:num_nearest_neighbors]
+
+            # Calculate prediction
+            init_prediction = sum(similarities[k_sorted_indices] * relevant_neighbors[:, -1][k_sorted_indices]) / sum(similarities[k_sorted_indices])
+            assert 0 < init_prediction <= 5, "Prediction is out of reasonable range (0, 5]"
+            if init_prediction < 1:
+                prediction = 1
+            else:
+                prediction = int(round(init_prediction))
+
+            self.update_prediction(predict_movie, prediction)
+
+        elif similarity_method == 'Pearson':
+            pass
+        else:
+            print "Wrong similarity method input"
+            return None
+
+
+
 # data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
 # print data[199]
 # print data[199][-17]
@@ -116,3 +193,79 @@ class TestUser:
 # l = '201 237 4\r\n'
 # a = map(int, l.split())
 # print a, len(a), type(a)
+
+l = np.array([[1,2,3,0], [4,5,6,7], [8,9,10,11]])
+l2 = np.array([1,2,3,0])
+print np.argsort(l2)
+print np.argsort(l2)[::-1][0:2]
+print l[:, -1][np.argsort(l2)[::-1][0:2]]
+# d = np.vstack((l[:, -1], l2[0:3]))
+# print d[0] * d[1]
+# print l
+# print l - 1
+# print list(l -2)
+# non_zero_ids = np.nonzero(l2)
+# print non_zero_ids, type(non_zero_ids), type(non_zero_ids[0])
+# print l[:,non_zero_ids[0]]
+# predict_non_zero = np.nonzero(l[:, 3])[0]
+# print "non_zero_row", predict_non_zero
+# movie_ids = np.array([0,2])
+# print "movie ids", movie_ids
+# b = np.array([predict_non_zero, movie_ids])
+# c = np.array([[1,2], [0,2]])
+# print l[b]
+# print l[c]
+# y = np.arange(35).reshape(5,7)
+# d = 3
+# a = np.array([0,1, d])
+# print y
+# print y[a,:][:, np.array([0,1])]
+# d = 3
+# a = np.array([0,1])
+# c = np.hstack((a, d))
+# print c[0: -1]
+# d = {1:0, 3:4, 2:10}
+# rate = []
+# for key in sorted(d.keys()):
+#     rate.append(d[key])
+# print rate
+# l2 = np.array([1,2,3,0, -1])
+# b = l2 > 0
+# print b, sum(b), type(b)
+# print l2[b]
+# c = l2 < 0
+# print c
+# l3 = l2.astype('float')
+# print l2 * l2
+
+# def cosine_similarity(vect2, vect1):
+#             """
+#             Compute the basic cosine similarity between vect1 and vect2 with the same dimensions.
+#             vect1 can't contain zero value.
+#             Vect1 and vect2 are np.arrays
+#             """
+#             assert sum(vect1 <= 0) == 0, "Test User's rating score has zero value"
+#             non_zeros = vect2 > 0
+#             if sum(non_zeros) == 0:
+#                 # vector2 has no rated scores
+#                 return 0.0
+#             if sum(non_zeros) == 1:
+#                 # fix the issue that if vectors have dimension of 1, their cosine similarity is always 1
+#                 cosine = 0.8 - float(abs(vect1[non_zeros] - vect2[non_zeros])) * 0.2
+#             else:
+#                 vector1 = vect1[non_zeros].astype('float')
+#                 vector2 = vect2[non_zeros].astype('float')
+#                 cosine = sum(vector1 * vector2) / np.sqrt(sum(vector1 * vector1) * sum(vector2 * vector2))
+#             return cosine
+# #
+# print cosine_similarity(np.array([0,0,0]), np.array([1,2,3]))
+# print cosine_similarity(np.array([0,0,3]), np.array([1,2,3]))
+# print cosine_similarity(np.array([0,0,1]), np.array([1,2,3]))
+# print cosine_similarity(np.array([1,2,0]), np.array([1,2,3]))
+# print cosine_similarity(np.array([3,2,1]), np.array([1,2,3]))
+# print cosine_similarity(np.array([1,2,3]), np.array([1,2,3]))
+#
+# l = np.array([[0,0,0], [0,0,3], [0,0,1], [1,2,0], [3,2,1], [1,2,3]])
+# print np.apply_along_axis(cosine_similarity, 1, l, np.array([1,2,3]))
+
+
