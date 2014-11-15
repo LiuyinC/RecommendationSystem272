@@ -157,6 +157,11 @@ class TestUser:
         predict_non_zero_id = np.nonzero(training_data[:, predict_movie_index])[0]
         relevant_neighbors = training_data[predict_non_zero_id , :][:, np.hstack((rated_movies_indices, predict_movie_index))]
 
+        # If this movie has not been rated by any other users, set prediction as 3
+        if np.size(relevant_neighbors) == 0:
+            self.update_prediction(predict_movie, 3)
+            return
+
         # Get test user's rating as a np.array
         user_rated_scores = []
         for key in sorted(rated_movies.keys()):
@@ -170,8 +175,12 @@ class TestUser:
             k_sorted_indices = np.argsort(similarities)[::-1][0:num_nearest_neighbors]
 
             # Calculate prediction
-            init_prediction = sum(similarities[k_sorted_indices] * relevant_neighbors[:, -1][k_sorted_indices]) / sum(similarities[k_sorted_indices])
-            assert 0 < init_prediction <= 5, "Prediction is out of reasonable range (0, 5]"
+            if sum(similarities[k_sorted_indices]) == 0:
+                init_prediction = np.average(relevant_neighbors[:, -1][k_sorted_indices])
+            else:
+                init_prediction = sum(similarities[k_sorted_indices] * relevant_neighbors[:, -1][k_sorted_indices]) / sum(similarities[k_sorted_indices])
+            # print similarities[k_sorted_indices], k_sorted_indices, np.size(relevant_neighbors), relevant_neighbors
+            assert 0 < init_prediction < 5.0001, "Prediction " + str(init_prediction) +" is out of reasonable range (0, 5]"
             if init_prediction < 1:
                 prediction = 1
             else:
@@ -191,8 +200,8 @@ def run_example():
     Run the recommendation system
     """
     training_data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
-    test_users = read_test(TESTING5_URL)
-    output_file = open("result5.txt", "w")
+    test_users = read_test(TESTING20_URL)
+    output_file = open("result20_ub_cosine_5nbs.txt", "w")
     for user in test_users.values():
         for predicting_movie in user.get_predictions().keys():
             user.user_based_CF(predicting_movie, training_data, 5, "Cosine")
