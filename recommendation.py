@@ -139,8 +139,8 @@ class TestUser:
             non_zeros = vect2 > 0
             if sum(non_zeros) == 0:
                 # vector2 has no rated scores
-                return 0.0
-            if sum(non_zeros) == 1:
+                cosine = 0.0
+            elif sum(non_zeros) == 1:
                 # fix the issue that if vectors have dimension of 1, their cosine similarity is always 1
                 cosine = 0.8 - float(abs(vect1[non_zeros] - vect2[non_zeros])) * 0.2
             else:
@@ -149,18 +149,48 @@ class TestUser:
                 cosine = sum(vector1 * vector2) / np.sqrt(sum(vector1 * vector1) * sum(vector2 * vector2))
             return cosine
 
+
+        def pearson_correlation(vect2, vect1):
+            """
+            Calculate the pearson_correlation of vect1 and vect2 and
+            return the weights.
+            Vect1 represents the test user and can't have zero element(s).
+            Last two values of vect2 are predicting movie's rating and neighbor's bias
+            """
+            assert sum(vect1 <= 0) == 0, "Test User has zero rating."
+            assert np.size(vect1) == np.size(vect2) - 2, "Don't have the same dimension"
+            non_zeros = vect2[0:-2] > 0
+            vector1 = vect1[non_zeros].astype('float')
+            vector2 = vect2[non_zeros].astype('float')
+            vect1_ave = np.average(vect1)
+            vect2_ave = vect2[-1]
+
+
+            if np.size(np.nonzero(vector2 - vect2_ave)) == 0 or sum(non_zeros) == 0:
+                # The training use has no preference on any movies OR it has no rating.
+                return 0.0
+
+            if sum(non_zeros) == 1:
+                # Fix the issue that if vectors have dimension of 1, their cosine similarity is always 1
+                weight = 0.8 - float(abs(vect1[non_zeros] - vect2[non_zeros])) * 0.2
+                return weight
+
+            if np.size(np.nonzero(vector1 - vect1_ave)) == 0:
+                # Test user has no preference on such data, which movies are also rated by neighbors
+                return cosine_similarity(vect2[0:-2], vect1)
+
+            weight = sum((vector2 - vect2_ave) * (vector1 - vect1_ave)) / np.sqrt(sum((vector1 - vect1_ave)*(vector1 - vect1_ave) ) * sum((vector2 - vect2_ave)*(vector2 - vect2_ave)))
+            assert -1.0001 < weight < 1.0001, "Weight " + str(weight) +" is out of range\n" +"training: " + str(vect2) + " Test user: " + str(vect1) + "\nvectors " + str(vector2) + str(vector1) + "\n average" + str(vect2_ave) + str(vect1_ave)
+            return weight
+
+
         # Get relevant neighbors as a n * (m +1) matrix, where n is the number of neighbors,
-        # first m columns are relevant movies and last column is predicting movie.
+        # first m columns are relevant movies and last column is predicting movie's score.
         rated_movies = self.get_rated_movies()
         rated_movies_indices = np.array(sorted(rated_movies.keys())) - 1
         predict_movie_index = predict_movie - 1
         predict_non_zero_id = np.nonzero(training_data[:, predict_movie_index])[0]
         relevant_neighbors = training_data[predict_non_zero_id , :][:, np.hstack((rated_movies_indices, predict_movie_index))]
-
-        # If this movie has not been rated by any other users, set prediction as 3
-        if np.size(relevant_neighbors) == 0:
-            self.update_prediction(predict_movie, 3)
-            return
 
         # Get test user's rating as a np.array
         user_rated_scores = []
@@ -168,17 +198,32 @@ class TestUser:
             user_rated_scores.append(rated_movies[key])
         user_rated_scores = np.array(user_rated_scores)
 
+        # If the user doesn't have any preference on any movies, or this movie has not been rated by any other users,
+        # Set prediction as the average of user's rating.
+        if np.size(np.nonzero(user_rated_scores - np.average(user_rated_scores))) == 0 or np.size(relevant_neighbors) == 0:
+            prediction = int(np.average(user_rated_scores))
+            self.update_prediction(predict_movie, prediction)
+            return
+
+        # Add bias to last column
+        masked_neighbors = np.ma.masked_equal(training_data[predict_non_zero_id, :], 0)
+        neighbor_bias = np.ma.average(masked_neighbors, 1)
+        relevant_neighbors = np.hstack((relevant_neighbors, neighbor_bias.reshape((len(neighbor_bias), 1))))
+        # print relevant_neighbors
         if similarity_method == 'Cosine':
+            """
+            Predict movie by cosine similarity
+            """
             # Calculate similarities
-            similarities = np.apply_along_axis(cosine_similarity, 1, relevant_neighbors[:, 0:-1], user_rated_scores)
+            similarities = np.apply_along_axis(cosine_similarity, 1, relevant_neighbors[:, 0:-2], user_rated_scores)
             # Find k nearest neighbors
             k_sorted_indices = np.argsort(similarities)[::-1][0:num_nearest_neighbors]
 
             # Calculate prediction
             if sum(similarities[k_sorted_indices]) == 0:
-                init_prediction = np.average(relevant_neighbors[:, -1][k_sorted_indices])
+                init_prediction = np.average(relevant_neighbors[:, -2][k_sorted_indices])
             else:
-                init_prediction = sum(similarities[k_sorted_indices] * relevant_neighbors[:, -1][k_sorted_indices]) / sum(similarities[k_sorted_indices])
+                init_prediction = sum(similarities[k_sorted_indices] * relevant_neighbors[:, -2][k_sorted_indices]) / sum(similarities[k_sorted_indices])
             # print similarities[k_sorted_indices], k_sorted_indices, np.size(relevant_neighbors), relevant_neighbors
             assert 0 < init_prediction < 5.0001, "Prediction " + str(init_prediction) +" is out of reasonable range (0, 5]"
             if init_prediction < 1:
@@ -189,7 +234,37 @@ class TestUser:
             self.update_prediction(predict_movie, prediction)
 
         elif similarity_method == 'Pearson':
-            pass
+            """
+            Predict movie by pearson correlation.
+            """
+            # Calculate weights
+            weights = np.apply_along_axis(pearson_correlation, 1, relevant_neighbors, user_rated_scores)
+            # Find the k nearest neighbors
+            k_sorted_indices = np.argsort(np.absolute(weights))[::-1][0:num_nearest_neighbors]
+            # Calculate testing user's average base
+            user_average = np.average(user_rated_scores)
+
+            # Calculate prediction
+            if sum(np.absolute(weights[k_sorted_indices])) == 0:
+                init_prediction = user_average
+            else:
+                neighbor_natural_ratings = relevant_neighbors[:,-2] - relevant_neighbors[:, -1]
+                # print "weights", weights
+                # print "k weights", weights[k_sorted_indices]
+                init_prediction = user_average + sum(weights[k_sorted_indices] * neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
+                # print sum(weights[k_sorted_indices] * neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
+
+            assert -5.000 < init_prediction < 10.000, "Prediction " + str(init_prediction) +" is out of reasonable range (0, 5]"
+
+            if init_prediction < 1:
+                prediction = 1
+            elif init_prediction > 5:
+                prediction = 5
+            else:
+                prediction = int(round(init_prediction))
+
+            self.update_prediction(predict_movie, prediction)
+
         else:
             print "Wrong similarity method input"
             return None
@@ -200,14 +275,28 @@ def run_example():
     Run the recommendation system
     """
     training_data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
-    test_users = read_test(TESTING20_URL)
-    output_file = open("result20_ub_cosine_5nbs.txt", "w")
+    test_users = read_test(TESTING5_URL)
+    output_file = open("result5_ub_pearson_20nbs.txt", "w")
     for user in test_users.values():
         for predicting_movie in user.get_predictions().keys():
-            user.user_based_CF(predicting_movie, training_data, 5, "Cosine")
+            user.user_based_CF(predicting_movie, training_data, 20, "Pearson")
         user.output_predictions(output_file)
     output_file.close()
 
+
+def run_test(userid, movieid):
+    """
+    Run a test on one testing user to predict one movie's rating
+    """
+    training_data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
+    user = read_test(TESTING5_URL)[userid]
+    print "user's rated movies:", user.get_rated_movies()
+
+    user.user_based_CF(movieid, training_data, 5, "Pearson")
+    print "prediction", user.get_predictions()
+
+
+# run_test(201, 1)
 
 run_example()
 
@@ -227,7 +316,16 @@ run_example()
 # a = map(int, l.split())
 # print a, len(a), type(a)
 
-# l = np.array([[1,2,3,0], [4,5,6,7], [8,9,10,11]])
+# l = np.array([[1,2,3,0], [4,5,6,7], [8,9,10,11],[12,13,14,15]])
+# # print l
+# l2 = np.ma.masked_equal(l, 0)
+# ave1 = np.ma.average(l, 1)
+# ave2 = np.ma.average(l2,1)
+# print ave1
+# print ave2
+# ave_t = ave.reshape((len(ave), 1))
+# print np.hstack((l, ave_t))
+# print np.average(l, 1)
 # l2 = np.array([1,2,3,0])
 # print np.argsort(l2)
 # print np.argsort(l2)[::-1][0:2]
@@ -299,6 +397,16 @@ run_example()
 # print cosine_similarity(np.array([1,2,3]), np.array([1,2,3]))
 #
 # l = np.array([[0,0,0], [0,0,3], [0,0,1], [1,2,0], [3,2,1], [1,2,3]])
+
+
 # print np.apply_along_axis(cosine_similarity, 1, l, np.array([1,2,3]))
+# user_rated_scores = np.array([3, 2, -1, 4, -5.3, 4.3])
+# if np.size(np.nonzero(user_rated_scores - np.average(user_rated_scores))) == 0:
+#     print "T", np.size(np.nonzero(user_rated_scores - np.average(user_rated_scores)))
+#
+# print int(np.average(user_rated_scores))
+# print user_rated_scores - np.average(user_rated_scores)
+# print np.absolute(user_rated_scores)
+
 
 
