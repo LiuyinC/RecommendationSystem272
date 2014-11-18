@@ -6,6 +6,7 @@ Develop different algorithms to make recommendations for movies.
 
 import urllib2
 import numpy as np
+import math
 from scipy import linalg
 
 
@@ -119,7 +120,7 @@ class TestUser:
             output_file.write(str(self.get_userid()) + "\t" + str(movie) + "\t" + str(predictions[movie]) + "\r")
 
 
-    def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method):
+    def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method, case_amplification = False):
         """
         Get other rating information from training data where rating score of predict movie is not zero.
         If user_based is true, the rating information only contains test user's rated movies.
@@ -150,12 +151,13 @@ class TestUser:
             return cosine
 
 
-        def pearson_correlation(vect2, vect1):
+        def pearson_correlation(vect2, vect1, case_ampl = case_amplification):
             """
             Calculate the pearson_correlation of vect1 and vect2 and
             return the weights.
             Vect1 represents the test user and can't have zero element(s).
             Last two values of vect2 are predicting movie's rating and neighbor's bias
+            case_ampl: Apply case amplification or not.
             """
             assert sum(vect1 <= 0) == 0, "Test User has zero rating."
             assert np.size(vect1) == np.size(vect2) - 2, "Don't have the same dimension"
@@ -180,7 +182,13 @@ class TestUser:
                 return cosine_similarity(vect2[0:-2], vect1)
 
             weight = sum((vector2 - vect2_ave) * (vector1 - vect1_ave)) / np.sqrt(sum((vector1 - vect1_ave)*(vector1 - vect1_ave) ) * sum((vector2 - vect2_ave)*(vector2 - vect2_ave)))
+
+            # Case amplification
+            if case_ampl == True:
+                case_ampl_para = 2.5
+                weight = math.copysign(1, weight) * math.pow(abs(weight), case_ampl_para)
             assert -1.0001 < weight < 1.0001, "Weight " + str(weight) +" is out of range\n" +"training: " + str(vect2) + " Test user: " + str(vect1) + "\nvectors " + str(vector2) + str(vector1) + "\n average" + str(vect2_ave) + str(vect1_ave)
+
             return weight
 
 
@@ -276,10 +284,10 @@ def run_example():
     """
     training_data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
     test_users = read_test(TESTING5_URL)
-    output_file = open("result5_ub_pearson_20nbs.txt", "w")
+    output_file = open("result5_ub_pearson_20nbs_cased.txt", "w")
     for user in test_users.values():
         for predicting_movie in user.get_predictions().keys():
-            user.user_based_CF(predicting_movie, training_data, 20, "Pearson")
+            user.user_based_CF(predicting_movie, training_data, 20, "Pearson", case_amplification=True)
         user.output_predictions(output_file)
     output_file.close()
 
@@ -292,7 +300,7 @@ def run_test(userid, movieid):
     user = read_test(TESTING5_URL)[userid]
     print "user's rated movies:", user.get_rated_movies()
 
-    user.user_based_CF(movieid, training_data, 5, "Pearson")
+    user.user_based_CF(movieid, training_data, 5, "Pearson", case_amplification=True)
     print "prediction", user.get_predictions()
 
 
@@ -369,33 +377,8 @@ run_example()
 # l3 = l2.astype('float')
 # print l2 * l2
 
-# def cosine_similarity(vect2, vect1):
-#             """
-#             Compute the basic cosine similarity between vect1 and vect2 with the same dimensions.
-#             vect1 can't contain zero value.
-#             Vect1 and vect2 are np.arrays
-#             """
-#             assert sum(vect1 <= 0) == 0, "Test User's rating score has zero value"
-#             non_zeros = vect2 > 0
-#             if sum(non_zeros) == 0:
-#                 # vector2 has no rated scores
-#                 return 0.0
-#             if sum(non_zeros) == 1:
-#                 # fix the issue that if vectors have dimension of 1, their cosine similarity is always 1
-#                 cosine = 0.8 - float(abs(vect1[non_zeros] - vect2[non_zeros])) * 0.2
-#             else:
-#                 vector1 = vect1[non_zeros].astype('float')
-#                 vector2 = vect2[non_zeros].astype('float')
-#                 cosine = sum(vector1 * vector2) / np.sqrt(sum(vector1 * vector1) * sum(vector2 * vector2))
-#             return cosine
-# #
-# print cosine_similarity(np.array([0,0,0]), np.array([1,2,3]))
-# print cosine_similarity(np.array([0,0,3]), np.array([1,2,3]))
-# print cosine_similarity(np.array([0,0,1]), np.array([1,2,3]))
-# print cosine_similarity(np.array([1,2,0]), np.array([1,2,3]))
-# print cosine_similarity(np.array([3,2,1]), np.array([1,2,3]))
-# print cosine_similarity(np.array([1,2,3]), np.array([1,2,3]))
-#
+
+
 # l = np.array([[0,0,0], [0,0,3], [0,0,1], [1,2,0], [3,2,1], [1,2,3]])
 
 
@@ -408,5 +391,6 @@ run_example()
 # print user_rated_scores - np.average(user_rated_scores)
 # print np.absolute(user_rated_scores)
 
-
+# a = 1.5
+# print math.copysign(1, a)
 
