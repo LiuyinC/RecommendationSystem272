@@ -7,7 +7,6 @@ Develop different algorithms to make recommendations for movies.
 import urllib2
 import numpy as np
 import math
-from scipy import linalg
 
 
 TRAINING_URL = 'http://www.cse.scu.edu/~yfang/coen272/train.txt'
@@ -50,6 +49,19 @@ def read_test(test_url):
             assert score > 0, "User did not give rate!"
             users[userid].add_rated_movie(movie, score)
     return users
+
+
+def item_item_similarity(training_data):
+    """
+    :param training_data: movie rating matrix, row represents user and column represent movie. Both user id and movie id
+    are indexed from 1.
+    :return: item_item similarity nested dictionary
+    """
+    sim_matrix = {}
+
+
+
+    return sim_matrix
 
 
 class TestUser:
@@ -120,7 +132,7 @@ class TestUser:
             output_file.write(str(self.get_userid()) + "\t" + str(movie) + "\t" + str(predictions[movie]) + "\r")
 
 
-    def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method, case_amplification = False):
+    def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method, case_amplification = False, IFU = False):
         """
         Get other rating information from training data where rating score of predict movie is not zero.
         If user_based is true, the rating information only contains test user's rated movies.
@@ -198,7 +210,6 @@ class TestUser:
         rated_movies_indices = np.array(sorted(rated_movies.keys())) - 1
         predict_movie_index = predict_movie - 1
         predict_non_zero_id = np.nonzero(training_data[:, predict_movie_index])[0]
-        relevant_neighbors = training_data[predict_non_zero_id , :][:, np.hstack((rated_movies_indices, predict_movie_index))]
 
         # Get test user's rating as a np.array
         user_rated_scores = []
@@ -206,17 +217,31 @@ class TestUser:
             user_rated_scores.append(rated_movies[key])
         user_rated_scores = np.array(user_rated_scores)
 
+        training_data_ifu = training_data
+
+        if IFU == True:
+            # Count inverse user frequency
+            user_freq = np.clip(np.sum(training_data > 0.0, 0), 1.0, TRAINING_USERS)
+            inverse_user_freq = np.log2(float(TRAINING_USERS) / user_freq.astype("float"))
+            if inverse_user_freq[predict_movie_index] != 0:
+                training_data_ifu = training_data * inverse_user_freq
+                user_rated_scores = user_rated_scores * inverse_user_freq[rated_movies_indices]
+
+        relevant_neighbors = training_data_ifu[predict_non_zero_id , :][:, np.hstack((rated_movies_indices, predict_movie_index))]
+
         # If the user doesn't have any preference on any movies, or this movie has not been rated by any other users,
         # Set prediction as the average of user's rating.
         if np.size(np.nonzero(user_rated_scores - np.average(user_rated_scores))) == 0 or np.size(relevant_neighbors) == 0:
-            prediction = int(np.average(user_rated_scores))
+            prediction = int(np.average(self.get_rated_movies().values()))
+            assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
             self.update_prediction(predict_movie, prediction)
             return
 
         # Add bias to last column
-        masked_neighbors = np.ma.masked_equal(training_data[predict_non_zero_id, :], 0)
+        masked_neighbors = np.ma.masked_equal(training_data_ifu[predict_non_zero_id, :], 0)
         neighbor_bias = np.ma.average(masked_neighbors, 1)
         relevant_neighbors = np.hstack((relevant_neighbors, neighbor_bias.reshape((len(neighbor_bias), 1))))
+
         # print relevant_neighbors
         if similarity_method == 'Cosine':
             """
@@ -234,11 +259,13 @@ class TestUser:
                 init_prediction = sum(similarities[k_sorted_indices] * relevant_neighbors[:, -2][k_sorted_indices]) / sum(similarities[k_sorted_indices])
             # print similarities[k_sorted_indices], k_sorted_indices, np.size(relevant_neighbors), relevant_neighbors
             assert 0 < init_prediction < 5.0001, "Prediction " + str(init_prediction) +" is out of reasonable range (0, 5]"
+
             if init_prediction < 1:
                 prediction = 1
             else:
                 prediction = int(round(init_prediction))
 
+            assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
             self.update_prediction(predict_movie, prediction)
 
         elif similarity_method == 'Pearson':
@@ -247,6 +274,7 @@ class TestUser:
             """
             # Calculate weights
             weights = np.apply_along_axis(pearson_correlation, 1, relevant_neighbors, user_rated_scores)
+
             # Find the k nearest neighbors
             k_sorted_indices = np.argsort(np.absolute(weights))[::-1][0:num_nearest_neighbors]
             # Calculate testing user's average base
@@ -254,15 +282,26 @@ class TestUser:
 
             # Calculate prediction
             if sum(np.absolute(weights[k_sorted_indices])) == 0:
-                init_prediction = user_average
+                init_prediction = np.average(self.get_rated_movies().values())
             else:
-                neighbor_natural_ratings = relevant_neighbors[:,-2] - relevant_neighbors[:, -1]
+
                 # print "weights", weights
                 # print "k weights", weights[k_sorted_indices]
-                init_prediction = user_average + sum(weights[k_sorted_indices] * neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
+                if IFU == True:
+                    # Get original users' rating and bias.
+                    orig_user_average = np.average(self.get_rated_movies().values())
+                    orig_relevant_neighbors = training_data[predict_non_zero_id , :][:, np.hstack((rated_movies_indices, predict_movie_index))]
+                    orig_masked_neighbors = np.ma.masked_equal(training_data[predict_non_zero_id, :], 0)
+                    orig_neighbor_bias = np.ma.average(orig_masked_neighbors, 1)
+                    orig_relevant_neighbors = np.hstack((orig_relevant_neighbors, orig_neighbor_bias.reshape((len(orig_neighbor_bias), 1))))
+                    orig_neighbor_natural_ratings = orig_relevant_neighbors[:,-2] - orig_relevant_neighbors[:, -1]
+                    init_prediction = orig_user_average + sum(weights[k_sorted_indices] * orig_neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
+                else:
+                    neighbor_natural_ratings = relevant_neighbors[:,-2] - relevant_neighbors[:, -1]
+                    init_prediction = user_average + sum(weights[k_sorted_indices] * neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
                 # print sum(weights[k_sorted_indices] * neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
 
-            assert -5.000 < init_prediction < 10.000, "Prediction " + str(init_prediction) +" is out of reasonable range (0, 5]"
+            assert -3.000 < init_prediction < 20.000, "Prediction " + str(init_prediction) +" is out of reasonable range (0, 5]"
 
             if init_prediction < 1:
                 prediction = 1
@@ -271,6 +310,8 @@ class TestUser:
             else:
                 prediction = int(round(init_prediction))
 
+            assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
+
             self.update_prediction(predict_movie, prediction)
 
         else:
@@ -278,16 +319,34 @@ class TestUser:
             return None
 
 
+    def item_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method):
+        """
+        Predict by item based algorithm
+        """
+        rated_movies = self.get_rated_movies()
+        rated_movies_indices = np.array(sorted(rated_movies.keys())) - 1
+        predict_movie_index = predict_movie - 1
+
+
+
+
+
+        prediction = 0
+        assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
+        self.update_prediction(predict_movie, prediction)
+
+
+
 def run_example():
     """
     Run the recommendation system
     """
     training_data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
-    test_users = read_test(TESTING5_URL)
-    output_file = open("result5_ub_pearson_20nbs_cased.txt", "w")
+    test_users = read_test(TESTING10_URL)
+    output_file = open("result10_ub_pearson_20nbs_iuf.txt", "w")
     for user in test_users.values():
         for predicting_movie in user.get_predictions().keys():
-            user.user_based_CF(predicting_movie, training_data, 20, "Pearson", case_amplification=True)
+            user.user_based_CF(predicting_movie, training_data, 20, "Pearson", case_amplification=False, IFU=True)
         user.output_predictions(output_file)
     output_file.close()
 
@@ -300,13 +359,13 @@ def run_test(userid, movieid):
     user = read_test(TESTING5_URL)[userid]
     print "user's rated movies:", user.get_rated_movies()
 
-    user.user_based_CF(movieid, training_data, 5, "Pearson", case_amplification=True)
-    print "prediction", user.get_predictions()
+    user.user_based_CF(movieid, training_data, 5, "Pearson", case_amplification=True, IFU=True)
+    print "prediction of movie " + str(movieid), user.get_predictions()[movieid]
 
 
-# run_test(201, 1)
+# run_test(229, 967)
 
-run_example()
+# run_example()
 
 # data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
 # print data[199]
@@ -324,8 +383,15 @@ run_example()
 # a = map(int, l.split())
 # print a, len(a), type(a)
 
-# l = np.array([[1,2,3,0], [4,5,6,7], [8,9,10,11],[12,13,14,15]])
-# # print l
+# l = np.array([[1,2,3,0], [4,5,0,0], [8,0,10,0],[0,13,14,0]])
+# print l
+# uf = np.clip(np.sum(l > 0, 0), 1, 200)
+# print np.log2(float(100) / uf.astype("float"))
+# timer = np.array([0.5, 0.5, 1, 0.5])
+# print l * timer
+
+
+# print l
 # l2 = np.ma.masked_equal(l, 0)
 # ave1 = np.ma.average(l, 1)
 # ave2 = np.ma.average(l2,1)
