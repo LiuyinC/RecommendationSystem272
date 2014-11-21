@@ -51,16 +51,42 @@ def read_test(test_url):
     return users
 
 
-def item_item_similarity(training_data):
+def item_item_similarity(training_data, num_movie, method = "Adjusted_cosine"):
     """
     :param training_data: movie rating matrix, row represents user and column represent movie. Both user id and movie id
     are indexed from 1.
     :return: item_item similarity nested dictionary
     """
     sim_matrix = {}
+    masked_data = np.ma.masked_equal(training_data, 0)
+    if method == "Adjusted_cosine":
+        # Calculate item-item similarity by Adjusted Cosine similarity
+        user_bias = np.average(masked_data, 1)
+        natural_ratings = masked_data - user_bias.reshape(len(user_bias), 1)
+        for movie_i in range(1, num_movie + 1):
+            sim_matrix[movie_i] = {}
+            for movie_j in range(1, num_movie + 1):
+                rating_i = natural_ratings[:, movie_i - 1]
+                rating_j = natural_ratings[:, movie_j - 1]
+                if np.ma.MaskedArray.count(rating_i * rating_j) >= 3:
+                    similarity = np.ma.sum(rating_i * rating_j) / np.ma.sqrt(np.ma.sum(rating_i * rating_i) * np.ma.sum(rating_j * rating_j))
+                else:
+                    similarity = 0
+                assert -1.0001 < similarity < 1.0001, "Similarity " + str(similarity) + " is out of range [-1, 1]"
+                sim_matrix[movie_i][movie_j] = similarity
 
-
-
+    elif method == "Cosine":
+        # Calculate item-item similarity by Cosine similarity
+        for movie_i in range(1, num_movie + 1):
+            sim_matrix[movie_i] = {}
+            rating_i = masked_data[:, movie_i - 1]
+            for movie_j in range(1, num_movie + 1):
+                rating_j = masked_data[:, movie_j - 1]
+                if np.ma.MaskedArray.count(rating_i * rating_j) >= 3:
+                    similarity = np.ma.sum(rating_i * rating_j) / np.ma.sqrt(np.ma.sum(rating_i * rating_i) * np.ma.sum(rating_j * rating_j))
+                else:
+                    similarity = 0
+        assert 0 <= similarity <= 1, "Similarity" + str(similarity) + " is out of range [0, 1]"
     return sim_matrix
 
 
@@ -319,25 +345,32 @@ class TestUser:
             return None
 
 
-    def item_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method):
+    def item_based_CF(self, predict_movie, similarity_matrix):
         """
-        Predict by item based algorithm
+        Predict by item based algorithm, given a item_item_similarity_matrix
         """
-        rated_movies = self.get_rated_movies()
-        rated_movies_indices = np.array(sorted(rated_movies.keys())) - 1
-        predict_movie_index = predict_movie - 1
+        numerator = 0
+        denominator = 0
+        for movie, rating in self.get_rated_movies().items():
+            similarity_score = similarity_matrix[predict_movie][movie]
+            numerator += float(similarity_score * rating)
+            denominator += float(abs(similarity_score))
+        if denominator == 0 or numerator == 0:
+            init_prediction = round(np.average(self.get_rated_movies().values()))
+        else:
+            init_prediction = numerator / denominator
 
+        if init_prediction < 1:
+            prediction = 1
+        else:
+            prediction = int(round(init_prediction))
 
-
-
-
-        prediction = 0
         assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
         self.update_prediction(predict_movie, prediction)
 
 
 
-def run_example():
+def run_user_based_example():
     """
     Run the recommendation system
     """
@@ -361,6 +394,23 @@ def run_test(userid, movieid):
 
     user.user_based_CF(movieid, training_data, 5, "Pearson", case_amplification=True, IFU=True)
     print "prediction of movie " + str(movieid), user.get_predictions()[movieid]
+
+
+def run_item_based_example():
+    """
+    Predict rating by user based CF
+    """
+    training = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
+    test_users = read_test(TESTING20_URL)
+    similarity_matrix = item_item_similarity(training, TRAINING_MOVIES)
+    output_file = open("result20_ib_adjusted.txt", "w")
+    for user in test_users.values():
+        for predicting_movie in user.get_predictions().keys():
+            user.item_based_CF(predicting_movie, similarity_matrix)
+        user.output_predictions(output_file)
+    output_file.close()
+
+run_item_based_example()
 
 
 # run_test(229, 967)
@@ -389,14 +439,18 @@ def run_test(userid, movieid):
 # print np.log2(float(100) / uf.astype("float"))
 # timer = np.array([0.5, 0.5, 1, 0.5])
 # print l * timer
-
+# print np.average(l, 0 )
 
 # print l
 # l2 = np.ma.masked_equal(l, 0)
 # ave1 = np.ma.average(l, 1)
-# ave2 = np.ma.average(l2,1)
+# ave2 = np.ma.average(l2,0)
 # print ave1
+# print l2
 # print ave2
+# print l2[:,0] * l2[:, 1], "sum", np.sum(l2[:,0] * l2[:, 1])
+# print np.ma.sum(l2[:,0] * l2[:, 1] > 0)
+
 # ave_t = ave.reshape((len(ave), 1))
 # print np.hstack((l, ave_t))
 # print np.average(l, 1)
