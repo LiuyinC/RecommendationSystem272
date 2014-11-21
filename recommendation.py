@@ -9,6 +9,7 @@ import numpy as np
 import math
 
 
+
 TRAINING_URL = 'http://www.cse.scu.edu/~yfang/coen272/train.txt'
 TRAINING_USERS = 200
 TRAINING_MOVIES = 1000
@@ -51,25 +52,27 @@ def read_test(test_url):
     return users
 
 
-def item_item_similarity(training_data, num_movie, method = "Adjusted_cosine"):
+def item_item_similarity(training_data, num_movie, method = "Adjusted_cosine", case_amplification = False):
     """
     :param training_data: movie rating matrix, row represents user and column represent movie. Both user id and movie id
     are indexed from 1.
     :return: item_item similarity nested dictionary
     """
     sim_matrix = {}
-    masked_data = np.ma.masked_equal(training_data, 0)
     if method == "Adjusted_cosine":
         # Calculate item-item similarity by Adjusted Cosine similarity
-        user_bias = np.average(masked_data, 1)
-        natural_ratings = masked_data - user_bias.reshape(len(user_bias), 1)
+        masked_data = np.ma.masked_equal(training_data, 0)
+        user_bias = np.ma.average(masked_data, 1)
+        # user_bias = user_bias.reshape(len(user_bias), 1)
         for movie_i in range(1, num_movie + 1):
             sim_matrix[movie_i] = {}
             for movie_j in range(1, num_movie + 1):
-                rating_i = natural_ratings[:, movie_i - 1]
-                rating_j = natural_ratings[:, movie_j - 1]
-                if np.ma.MaskedArray.count(rating_i * rating_j) >= 3:
-                    similarity = np.ma.sum(rating_i * rating_j) / np.ma.sqrt(np.ma.sum(rating_i * rating_i) * np.ma.sum(rating_j * rating_j))
+                common_indices = training_data[:, movie_i - 1] * training_data[:, movie_j - 1] > 0
+                if np.sum(common_indices) >= 3:
+                    rating_i = training_data[common_indices, movie_i - 1] - user_bias[common_indices]
+                    rating_j = training_data[common_indices, movie_j - 1] - user_bias[common_indices]
+                    # assert np.sum(rating_i > 0) == np.sum(rating_j > 0), "vector i and vector j don't have same effective values \n" + str(training_data[common_indices, movie_i - 1]) + str(user_bias[common_indices, :])
+                    similarity = np.sum(rating_i * rating_j) / np.sqrt(np.sum(rating_i * rating_i) * np.sum(rating_j * rating_j))
                 else:
                     similarity = 0
                 assert -1.0001 < similarity < 1.0001, "Similarity " + str(similarity) + " is out of range [-1, 1]"
@@ -79,16 +82,39 @@ def item_item_similarity(training_data, num_movie, method = "Adjusted_cosine"):
         # Calculate item-item similarity by Cosine similarity
         for movie_i in range(1, num_movie + 1):
             sim_matrix[movie_i] = {}
-            rating_i = masked_data[:, movie_i - 1]
+            rating_i = training_data[:, movie_i - 1]
             for movie_j in range(1, num_movie + 1):
-                rating_j = masked_data[:, movie_j - 1]
-                if np.ma.MaskedArray.count(rating_i * rating_j) >= 3:
-                    similarity = np.ma.sum(rating_i * rating_j) / np.ma.sqrt(np.ma.sum(rating_i * rating_i) * np.ma.sum(rating_j * rating_j))
+                rating_j = training_data[:, movie_j - 1]
+                common_indices = rating_i * rating_j > 0
+                if np.sum(common_indices) >= 8:
+                    common_rating_i = rating_i[common_indices]
+                    common_rating_j = rating_j[common_indices]
+                    assert len(common_rating_i) == len(common_rating_j), "vector i and vector j do not have same dimension"
+                    similarity = np.sum(common_rating_i * common_rating_j) / np.sqrt(np.sum(common_rating_i * common_rating_i) * np.sum(common_rating_j * common_rating_j))
                 else:
                     similarity = 0
-        assert 0 <= similarity <= 1, "Similarity" + str(similarity) + " is out of range [0, 1]"
+                assert 0.0 <= similarity <= 1.0, "Similarity" + str(similarity) + " is out of range [0, 1]"
+
+                if case_amplification == True:
+                    similarity = math.pow(similarity, 5)
+
+                sim_matrix[movie_i][movie_j] = similarity
+
     return sim_matrix
 
+
+def average_rating(data, num_movie):
+    """
+    :param data: user-movie rating matrix
+    :return: dictionary of movie id and it's average rating
+    """
+    masked_data = np.ma.masked_equal(data, 0)
+    averages = np.ma.average(masked_data, 0)
+    averages.filled(3)
+    ave_dict = {}
+    for movie in range(1, num_movie + 1):
+        ave_dict[movie] = averages[movie - 1]
+    return ave_dict
 
 class TestUser:
     """
@@ -158,7 +184,7 @@ class TestUser:
             output_file.write(str(self.get_userid()) + "\t" + str(movie) + "\t" + str(predictions[movie]) + "\r")
 
 
-    def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method, case_amplification = False, IFU = False):
+    def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method, case_amplification = False, IFU = False, smooth = False):
         """
         Get other rating information from training data where rating score of predict movie is not zero.
         If user_based is true, the rating information only contains test user's rated movies.
@@ -325,6 +351,7 @@ class TestUser:
                 else:
                     neighbor_natural_ratings = relevant_neighbors[:,-2] - relevant_neighbors[:, -1]
                     init_prediction = user_average + sum(weights[k_sorted_indices] * neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
+
                 # print sum(weights[k_sorted_indices] * neighbor_natural_ratings[k_sorted_indices]) / sum(np.absolute(weights[k_sorted_indices]))
 
             assert -3.000 < init_prediction < 20.000, "Prediction " + str(init_prediction) +" is out of reasonable range (0, 5]"
@@ -334,6 +361,9 @@ class TestUser:
             elif init_prediction > 5:
                 prediction = 5
             else:
+                if smooth == True:
+                    averages = average_rating(training_data, 1000)
+                    init_prediction = 0.6 *init_prediction + 0.4 * averages[predict_movie]
                 prediction = int(round(init_prediction))
 
             assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
@@ -365,6 +395,7 @@ class TestUser:
         else:
             prediction = int(round(init_prediction))
 
+        # print 'initial prediction', init_prediction
         assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
         self.update_prediction(predict_movie, prediction)
 
@@ -375,16 +406,16 @@ def run_user_based_example():
     Run the recommendation system
     """
     training_data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
-    test_users = read_test(TESTING10_URL)
-    output_file = open("result10_ub_pearson_20nbs_iuf.txt", "w")
+    test_users = read_test(TESTING20_URL)
+    output_file = open("result20_ub_pearson_10nbs_smooth_iuf.txt", "w")
     for user in test_users.values():
         for predicting_movie in user.get_predictions().keys():
-            user.user_based_CF(predicting_movie, training_data, 20, "Pearson", case_amplification=False, IFU=True)
+            user.user_based_CF(predicting_movie, training_data, 10, "Pearson", case_amplification=False, IFU=True, smooth=True)
         user.output_predictions(output_file)
     output_file.close()
 
 
-def run_test(userid, movieid):
+def run_user_based_test(userid, movieid):
     """
     Run a test on one testing user to predict one movie's rating
     """
@@ -402,115 +433,48 @@ def run_item_based_example():
     """
     training = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
     test_users = read_test(TESTING20_URL)
-    similarity_matrix = item_item_similarity(training, TRAINING_MOVIES)
-    output_file = open("result20_ib_adjusted.txt", "w")
+    similarity_matrix = item_item_similarity(training, TRAINING_MOVIES, method="Cosine", case_amplification=False)
+    output_file = open("result20_ib_cosine8.txt", "w")
     for user in test_users.values():
         for predicting_movie in user.get_predictions().keys():
             user.item_based_CF(predicting_movie, similarity_matrix)
         user.output_predictions(output_file)
     output_file.close()
 
-run_item_based_example()
 
-
-# run_test(229, 967)
-
-# run_example()
-
-# data = read_train(TRAINING_URL, TRAINING_USERS, TRAINING_MOVIES)
-# print data[199]
-# print data[199][-17]
-# data2 = data.split('\r')
-# print data2
-# print len(data2)
-
-# testdata = read_test(TESTING5_URL)
-
-# print "rated movies", testdata[201].get_rated_movies()
-# print "predictions", testdata[201].get_predictions()
-
-# l = '201 237 4\r\n'
-# a = map(int, l.split())
-# print a, len(a), type(a)
-
-# l = np.array([[1,2,3,0], [4,5,0,0], [8,0,10,0],[0,13,14,0]])
-# print l
-# uf = np.clip(np.sum(l > 0, 0), 1, 200)
-# print np.log2(float(100) / uf.astype("float"))
-# timer = np.array([0.5, 0.5, 1, 0.5])
-# print l * timer
-# print np.average(l, 0 )
-
-# print l
-# l2 = np.ma.masked_equal(l, 0)
-# ave1 = np.ma.average(l, 1)
-# ave2 = np.ma.average(l2,0)
-# print ave1
-# print l2
-# print ave2
-# print l2[:,0] * l2[:, 1], "sum", np.sum(l2[:,0] * l2[:, 1])
-# print np.ma.sum(l2[:,0] * l2[:, 1] > 0)
-
-# ave_t = ave.reshape((len(ave), 1))
-# print np.hstack((l, ave_t))
-# print np.average(l, 1)
-# l2 = np.array([1,2,3,0])
-# print np.argsort(l2)
-# print np.argsort(l2)[::-1][0:2]
-# print l[:, -1][np.argsort(l2)[::-1][0:2]]
-# d = np.vstack((l[:, -1], l2[0:3]))
-# print d[0] * d[1]
-# print l
-# print l - 1
-# print list(l -2)
-# non_zero_ids = np.nonzero(l2)
-# print non_zero_ids, type(non_zero_ids), type(non_zero_ids[0])
-# print l[:,non_zero_ids[0]]
-# predict_non_zero = np.nonzero(l[:, 3])[0]
-# print "non_zero_row", predict_non_zero
-# movie_ids = np.array([0,2])
-# print "movie ids", movie_ids
-# b = np.array([predict_non_zero, movie_ids])
-# c = np.array([[1,2], [0,2]])
-# print l[b]
-# print l[c]
-# y = np.arange(35).reshape(5,7)
-# d = 3
-# a = np.array([0,1, d])
-# print y
-# print y[a,:][:, np.array([0,1])]
-# d = 3
-# a = np.array([0,1])
-# c = np.hstack((a, d))
-# print c[0: -1]
-# d = {1:0, 3:4, 2:10}
-# rate = []
-# for key in sorted(d.keys()):
-#     rate.append(d[key])
-# print rate
-# l2 = np.array([1,2,3,0, -1])
-# b = l2 > 0
-# print b, sum(b), type(b)
-# print l2[b]
-# c = l2 < 0
-# print c
-# l3 = l2.astype('float')
-# print l2 * l2
+def test_suit1():
+    training = np.array([[3,5,0,0,4,0,4,0],
+                         [2,0,0,1,3,3,0,2],
+                         [4,0,5,3,2,0,0,4],
+                         [0,2,3,0,5,4,0,1],
+                         [4,0,3,2,0,1,0,1],
+                         [0,0,1,0,2,0,3,0],
+                         [1,0,0,0,3,0,2,0],
+                         [5,0,4,0,4,0,5,0],
+                         [0,0,0,0,0,0,3,4]])
+    test_1 = TestUser(101)
+    test_1.add_rated_movie(1,3)
+    test_1.add_rated_movie(2,5)
+    test_1.add_rated_movie(3,2)
+    test_1.add_rated_movie(4,2)
+    test_1.add_rated_movie(5,4)
+    test_1.add_rated_movie(6,4)
+    test_1.add_prediction(7)
+    test_1.add_prediction(8)
+    similarity_matrix = item_item_similarity(training, 8, method="Cosine", case_amplification=True)
+    for item in similarity_matrix:
+        print str(item) + ": ", similarity_matrix[item]
+    test_1.item_based_CF(7, similarity_matrix)
+    print "prediction of movie 7", test_1.get_predictions()[7]
+    print average_rating(training, 8)
 
 
 
-# l = np.array([[0,0,0], [0,0,3], [0,0,1], [1,2,0], [3,2,1], [1,2,3]])
+run_user_based_example()
 
+# run_item_based_example()
 
-# print np.apply_along_axis(cosine_similarity, 1, l, np.array([1,2,3]))
-# user_rated_scores = np.array([3, 2, -1, 4, -5.3, 4.3])
-# if np.size(np.nonzero(user_rated_scores - np.average(user_rated_scores))) == 0:
-#     print "T", np.size(np.nonzero(user_rated_scores - np.average(user_rated_scores)))
-#
-# print int(np.average(user_rated_scores))
-# print user_rated_scores - np.average(user_rated_scores)
-# print np.absolute(user_rated_scores)
+# run_user_based_test(229, 967)
 
-# a = 1.5
-# print math.copysign(1, a)
+# test_suit1()
 
