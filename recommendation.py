@@ -68,7 +68,7 @@ def item_item_similarity(training_data, num_movie, method = "Adjusted_cosine", c
             sim_matrix[movie_i] = {}
             for movie_j in range(1, num_movie + 1):
                 common_indices = training_data[:, movie_i - 1] * training_data[:, movie_j - 1] > 0
-                if np.sum(common_indices) >= 3:
+                if np.sum(common_indices) >= 5:
                     rating_i = training_data[common_indices, movie_i - 1] - user_bias[common_indices]
                     rating_j = training_data[common_indices, movie_j - 1] - user_bias[common_indices]
                     # assert np.sum(rating_i > 0) == np.sum(rating_j > 0), "vector i and vector j don't have same effective values \n" + str(training_data[common_indices, movie_i - 1]) + str(user_bias[common_indices, :])
@@ -86,7 +86,7 @@ def item_item_similarity(training_data, num_movie, method = "Adjusted_cosine", c
             for movie_j in range(1, num_movie + 1):
                 rating_j = training_data[:, movie_j - 1]
                 common_indices = rating_i * rating_j > 0
-                if np.sum(common_indices) >= 8:
+                if np.sum(common_indices) >= 5:
                     common_rating_i = rating_i[common_indices]
                     common_rating_j = rating_j[common_indices]
                     assert len(common_rating_i) == len(common_rating_j), "vector i and vector j do not have same dimension"
@@ -115,6 +115,7 @@ def average_rating(data, num_movie):
     for movie in range(1, num_movie + 1):
         ave_dict[movie] = averages[movie - 1]
     return ave_dict
+
 
 class TestUser:
     """
@@ -186,12 +187,14 @@ class TestUser:
 
     def user_based_CF(self, predict_movie, training_data, num_nearest_neighbors, similarity_method, case_amplification = False, IFU = False, smooth = False):
         """
-        Get other rating information from training data where rating score of predict movie is not zero.
-        If user_based is true, the rating information only contains test user's rated movies.
-        And return a n * (m+1) matrix, where n is number of relevant neighbors, and m is number of rated movies,
-        and the last column is rated scores of predicting movie.
-        If user_based is false, the rating information ?????????
-
+        :param predict_movie: the movie needed to predict
+        :param training_data: training data (user-movie array matrix)
+        :param num_nearest_neighbors: k
+        :param similarity_method: Cosine similarity or Pearson correlation
+        :param case_amplification: true if applied
+        :param IFU: true if inverse user frequency applied
+        :param smooth: true if linear smooth applied
+        :return: predict_movie's prediction, range [1, 5]
         """
         def cosine_similarity(vect2, vect1):
             """
@@ -398,7 +401,6 @@ class TestUser:
         # print 'initial prediction', init_prediction
         assert 1 <= prediction <= 5, "Prediction is wrong" + str(prediction)
         self.update_prediction(predict_movie, prediction)
-
 
 
 def run_user_based_example():
